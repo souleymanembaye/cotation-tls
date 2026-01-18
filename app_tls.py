@@ -1,110 +1,105 @@
 import streamlit as st
 import pandas as pd
+from fpdf import FPDF
 from datetime import datetime
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="GLOBAL TLS - Cotation Universelle", layout="wide")
+# --- CONFIGURATION DE LA PAGE ---
+st.set_page_config(page_title="GLOBAL TLS - Devis PDF", layout="wide")
 
-st.markdown("""
-    <style>
-    .stHeader { background-color: #004a99; color: white; padding: 10px; border-radius: 5px; }
-    .main-price { font-size: 40px; color: #004a99; font-weight: bold; }
-    </style>
-    """, unsafe_allow_html=True)
+# --- FONCTION GÉNÉRATION PDF ---
+class PDF(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 15)
+        self.cell(0, 10, 'GLOBAL TLS SARL - DEVIS OFFICIEL', 0, 1, 'C')
+        self.set_font('Arial', '', 10)
+        self.cell(0, 10, f'Date: {datetime.now().strftime("%d/%m/%Y")}', 0, 1, 'R')
+        self.ln(10)
 
-st.title("🌐 GLOBAL TLS SARL : Outil de Cotation Intelligent")
+def generate_pdf(data):
+    pdf = PDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    
+    # Infos Client
+    pdf.set_fill_color(200, 220, 255)
+    pdf.cell(0, 10, f"Client : {data['client']}", 0, 1, 'L', 1)
+    pdf.cell(0, 10, f"Référence : {data['ref']}", 0, 1, 'L')
+    pdf.ln(5)
+    
+    # Détails Marchandise
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, "Détails de l'expédition :", 0, 1)
+    pdf.set_font("Arial", size=11)
+    pdf.multi_cell(0, 10, f"Marchandise : {data['nature']}\nPoids Taxable : {data['ptax']:.2f} units\nTrajet : {data['mode']}")
+    pdf.ln(5)
+    
+    # Tableau des prix
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(140, 10, "Désignation", 1)
+    pdf.cell(50, 10, "Montant", 1, 1)
+    
+    pdf.set_font("Arial", size=11)
+    for item, price in data['details'].items():
+        pdf.cell(140, 10, item, 1)
+        pdf.cell(50, 10, f"{price:,.2f}", 1, 1)
+        
+    # Total
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(0, 15, f"TOTAL FINAL : {data['total']:,.2f} {data['devise']}", 0, 1, 'R')
+    
+    return pdf.output(dest='S').encode('latin-1')
 
-# --- BARRE LATÉRALE (INFOS GÉNÉRALES) ---
+# --- INTERFACE STREAMLIT ---
+st.title("🌐 GLOBAL TLS : Cotation & Export PDF")
+
 with st.sidebar:
-    st.header("📋 Information Dossier")
-    client = st.text_input("Nom du Client")
-    reference = st.text_input("Référence Dossier (ex: DKR-2024-001)")
-    devise = st.selectbox("Monnaie de facturation", ["EUR", "FCFA", "USD"])
-    taux_change = st.number_input("Taux de change (si différent de 1)", value=1.0)
+    st.header("📋 Dossier")
+    client = st.text_input("Nom du Client", "Client Exemple")
+    ref = st.text_input("Référence", "DEV-2024-001")
+    devise = st.selectbox("Devise", ["FCFA", "EUR", "USD"])
 
-# --- ZONE 1 : LA MARCHANDISE (CALCUL DU POIDS TAXABLE) ---
-st.subheader("📦 1. Nature et Dimensions de la Marchandise")
-col1, col2, col3 = st.columns(3)
-
+# Paramètres de calcul (Simplifiés pour l'exemple)
+col1, col2 = st.columns(2)
 with col1:
-    type_marchandise = st.text_input("Nature de la marchandise (ex: Riz, Informatique...)")
-    nb_colis = st.number_input("Nombre de colis", min_value=1, value=1)
-    poids_brut_total = st.number_input("Poids Brut Total (kg)", min_value=0.1, value=100.0)
+    nature = st.text_input("Nature marchandise", "Matériel divers")
+    poids = st.number_input("Poids (kg)", value=1000.0)
+    mode = st.selectbox("Mode", ["Maritime", "Aérien", "Routier"])
+    fret_base = st.number_input("Taux de Fret", value=500.0)
 
 with col2:
-    st.write("**Dimensions moyennes par colis (m)**")
-    l = st.number_input("Longueur", value=1.0)
-    w = st.number_input("Largeur", value=1.0)
-    h = st.number_input("Hauteur", value=1.0)
+    frais_douane = st.number_input("Frais Douane", value=50000.0)
+    livraison = st.number_input("Livraison", value=25000.0)
+    marge = st.number_input("Marge Bénéficiaire", value=15000.0)
 
-with col3:
-    mode_transport = st.selectbox("Mode de transport (Règle de taxation)", ["Maritime (1t = 1m3)", "Aérien (1t = 6m3)", "Routier (1t = 3m3)"])
-    
-    # Calcul du volume et du poids taxable
-    volume_total = nb_colis * (l * w * h)
-    
-    if "Maritime" in mode_transport:
-        poids_taxable = max(poids_brut_total / 1000, volume_total)
-        label_up = "UP (Unités Payantes)"
-    elif "Aérien" in mode_transport:
-        poids_taxable = max(poids_brut_total, volume_total * 166.67)
-        label_up = "kg taxables"
-    else: # Routier
-        poids_taxable = max(poids_brut_total / 1000, volume_total / 3)
-        label_up = "Tonnes taxables"
-
-    st.metric(label_up, f"{poids_taxable:.2f}")
+# Calcul du total
+total_calcul = fret_base + frais_douane + livraison + marge
 
 st.divider()
+st.subheader(f"Total estimé : {total_calcul:,.2f} {devise}")
 
-# --- ZONE 2 : CALCUL DES COÛTS (DÉTAILLÉS) ---
-st.subheader("💰 2. Décomposition des Coûts")
-c_pre, c_main, c_post = st.columns(3)
+# Préparation des données pour le PDF
+donnees_devis = {
+    "client": client,
+    "ref": ref,
+    "nature": nature,
+    "ptax": poids,
+    "mode": mode,
+    "devise": devise,
+    "details": {
+        "Fret Principal": fret_base,
+        "Douane & Formalités": frais_douane,
+        "Livraison": livraison,
+        "Frais de dossier & Marge": marge
+    },
+    "total": total_calcul
+}
 
-with c_pre:
-    st.markdown("**🚛 Pré-acheminement & Port**")
-    frais_ramassage = st.number_input("Ramassage / Transport amont", value=0.0)
-    frais_douane_export = st.number_input("Douane Export / Formalités", value=0.0)
-    frais_port_depart = st.number_input("Passage Port/Aéroport départ", value=0.0)
-
-with c_main:
-    st.markdown("**🚢 Transport Principal**")
-    fret_unitaire = st.number_input(f"Taux de Fret (par {label_up})", value=0.0)
-    surcharges = st.number_input("Surcharges totales (BAF, CAF, Sécurité...)", value=0.0)
-    assurance = st.number_input("Assurance Ad Valorem", value=0.0)
-
-with c_post:
-    st.markdown("**🚚 Post-acheminement & Livraison**")
-    frais_port_arrivee = st.number_input("Passage Port/Aéroport arrivée", value=0.0)
-    douane_import = st.number_input("Douane Import / Taxes", value=0.0)
-    livraison_finale = st.number_input("Livraison dernier kilomètre", value=0.0)
-
-# --- ZONE 3 : MARGE ET TOTAL ---
-st.divider()
-col_marge, col_total = st.columns([1, 2])
-
-with col_marge:
-    marge_type = st.radio("Type de marge", ["Pourcentage (%)", "Forfait fixe"])
-    valeur_marge = st.number_input("Valeur de la marge", value=15.0)
-
-# CALCUL DU TOTAL
-total_couts = frais_ramassage + frais_douane_export + frais_port_depart + (fret_unitaire * poids_taxable) + surcharges + assurance + frais_port_arrivee + douane_import + livraison_finale
-
-if marge_type == "Pourcentage (%)":
-    prix_final = total_couts * (1 + valeur_marge / 100)
-else:
-    prix_final = total_couts + valeur_marge
-
-prix_final_devise = prix_final * taux_change
-
-with col_total:
-    st.write(f"### Prix de vente final pour {client if client else 'le client'}")
-    st.markdown(f'<p class="main-price">{prix_final_devise:,.2f} {devise}</p>', unsafe_allow_html=True)
-    
-    if st.button("✅ Valider et Générer le Devis"):
-        st.balloons()
-        st.success(f"Dossier {reference} enregistré avec succès !")
-        # Ici on peut ajouter la fonction de génération PDF ou sauvegarde DB
-
-# --- FOOTER ---
-st.caption(f"GLOBAL TLS SARL - Logiciel de Cotation Interne - {datetime.now().year}")
+# --- BOUTON DE TÉLÉCHARGEMENT ---
+pdf_output = generate_pdf(donnees_devis)
+st.download_button(
+    label="📥 Télécharger le Devis en PDF",
+    data=pdf_output,
+    file_name=f"Devis_GLOBAL_TLS_{ref}.pdf",
+    mime="application/pdf"
+)
