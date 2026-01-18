@@ -1,79 +1,110 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
 from datetime import datetime
 
-# --- CONFIGURATION DE LA BASE DE DONNÉES ---
-def init_db():
-    conn = sqlite3.connect('global_tls_quotes.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS quotes
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                  date TEXT, client TEXT, marchandise TEXT, 
-                  poids REAL, prix_total INTEGER, marge INTEGER)''')
-    conn.commit()
-    conn.close()
+# --- CONFIGURATION ---
+st.set_page_config(page_title="GLOBAL TLS - Cotation Universelle", layout="wide")
 
-def save_quote(client, marchandise, poids, prix_total, marge):
-    conn = sqlite3.connect('global_tls_quotes.db')
-    c = conn.cursor()
-    date_now = datetime.now().strftime("%d/%m/%Y %H:%M")
-    c.execute("INSERT INTO quotes (date, client, marchandise, poids, prix_total, marge) VALUES (?,?,?,?,?,?)",
-              (date_now, client, marchandise, poids, prix_total, marge))
-    conn.commit()
-    conn.close()
+st.markdown("""
+    <style>
+    .stHeader { background-color: #004a99; color: white; padding: 10px; border-radius: 5px; }
+    .main-price { font-size: 40px; color: #004a99; font-weight: bold; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- INITIALISATION ---
-init_db()
-st.set_page_config(page_title="GLOBAL TLS - Cotation", layout="wide")
+st.title("🌐 GLOBAL TLS SARL : Outil de Cotation Intelligent")
 
-# --- INTERFACE ---
-st.title("🌐 GLOBAL TLS SARL - Gestion des Cotations")
+# --- BARRE LATÉRALE (INFOS GÉNÉRALES) ---
+with st.sidebar:
+    st.header("📋 Information Dossier")
+    client = st.text_input("Nom du Client")
+    reference = st.text_input("Référence Dossier (ex: DKR-2024-001)")
+    devise = st.selectbox("Monnaie de facturation", ["EUR", "FCFA", "USD"])
+    taux_change = st.number_input("Taux de change (si différent de 1)", value=1.0)
 
-tabs = st.tabs(["🆕 Nouvelle Cotation", "📂 Historique des Devis"])
+# --- ZONE 1 : LA MARCHANDISE (CALCUL DU POIDS TAXABLE) ---
+st.subheader("📦 1. Nature et Dimensions de la Marchandise")
+col1, col2, col3 = st.columns(3)
 
-with tabs[0]:
-    col_in, col_out = st.columns([1, 1])
+with col1:
+    type_marchandise = st.text_input("Nature de la marchandise (ex: Riz, Informatique...)")
+    nb_colis = st.number_input("Nombre de colis", min_value=1, value=1)
+    poids_brut_total = st.number_input("Poids Brut Total (kg)", min_value=0.1, value=100.0)
+
+with col2:
+    st.write("**Dimensions moyennes par colis (m)**")
+    l = st.number_input("Longueur", value=1.0)
+    w = st.number_input("Largeur", value=1.0)
+    h = st.number_input("Hauteur", value=1.0)
+
+with col3:
+    mode_transport = st.selectbox("Mode de transport (Règle de taxation)", ["Maritime (1t = 1m3)", "Aérien (1t = 6m3)", "Routier (1t = 3m3)"])
     
-    with col_in:
-        st.subheader("Paramètres")
-        client = st.text_input("Client", "Client Anonyme")
-        marchandise = st.selectbox("Marchandise", ["Matériel Informatique", "Produits Frais", "BTP", "Divers"])
-        valeur = st.number_input("Valeur Marchandise (€)", value=50000)
-        poids = st.number_input("Poids (Tonnes)", value=1.0)
-        marge = st.slider("Marge (%)", 5, 40, 15)
-
-    # Logique de calcul simple
-    fret_base = 2500 * 655.95 # Base maritime
-    assurance = (valeur * 0.008) * 655.95 # 0.8% de la valeur
-    transport_mali = 1200000 if poids > 5 else poids * 200000
+    # Calcul du volume et du poids taxable
+    volume_total = nb_colis * (l * w * h)
     
-    total_achat = fret_base + assurance + transport_mali
-    prix_final = int(total_achat * (1 + marge/100))
+    if "Maritime" in mode_transport:
+        poids_taxable = max(poids_brut_total / 1000, volume_total)
+        label_up = "UP (Unités Payantes)"
+    elif "Aérien" in mode_transport:
+        poids_taxable = max(poids_brut_total, volume_total * 166.67)
+        label_up = "kg taxables"
+    else: # Routier
+        poids_taxable = max(poids_brut_total / 1000, volume_total / 3)
+        label_up = "Tonnes taxables"
 
-    with col_out:
-        st.subheader("Résultat")
-        st.metric("Prix Final (FCFA)", f"{prix_final:,}")
-        
-        if st.button("💾 Enregistrer et Générer PDF"):
-            save_quote(client, marchandise, poids, prix_final, marge)
-            st.success(f"Devis enregistré pour {client} !")
-            st.download_button("Télécharger le Devis (Simulation)", "Contenu du devis...", file_name="devis_tls.txt")
+    st.metric(label_up, f"{poids_taxable:.2f}")
 
-with tabs[1]:
-    st.subheader("Dernières Cotations Enregistrées")
-    conn = sqlite3.connect('global_tls_quotes.db')
-    df_history = pd.read_sql_query("SELECT * FROM quotes ORDER BY id DESC", conn)
-    conn.close()
+st.divider()
+
+# --- ZONE 2 : CALCUL DES COÛTS (DÉTAILLÉS) ---
+st.subheader("💰 2. Décomposition des Coûts")
+c_pre, c_main, c_post = st.columns(3)
+
+with c_pre:
+    st.markdown("**🚛 Pré-acheminement & Port**")
+    frais_ramassage = st.number_input("Ramassage / Transport amont", value=0.0)
+    frais_douane_export = st.number_input("Douane Export / Formalités", value=0.0)
+    frais_port_depart = st.number_input("Passage Port/Aéroport départ", value=0.0)
+
+with c_main:
+    st.markdown("**🚢 Transport Principal**")
+    fret_unitaire = st.number_input(f"Taux de Fret (par {label_up})", value=0.0)
+    surcharges = st.number_input("Surcharges totales (BAF, CAF, Sécurité...)", value=0.0)
+    assurance = st.number_input("Assurance Ad Valorem", value=0.0)
+
+with c_post:
+    st.markdown("**🚚 Post-acheminement & Livraison**")
+    frais_port_arrivee = st.number_input("Passage Port/Aéroport arrivée", value=0.0)
+    douane_import = st.number_input("Douane Import / Taxes", value=0.0)
+    livraison_finale = st.number_input("Livraison dernier kilomètre", value=0.0)
+
+# --- ZONE 3 : MARGE ET TOTAL ---
+st.divider()
+col_marge, col_total = st.columns([1, 2])
+
+with col_marge:
+    marge_type = st.radio("Type de marge", ["Pourcentage (%)", "Forfait fixe"])
+    valeur_marge = st.number_input("Valeur de la marge", value=15.0)
+
+# CALCUL DU TOTAL
+total_couts = frais_ramassage + frais_douane_export + frais_port_depart + (fret_unitaire * poids_taxable) + surcharges + assurance + frais_port_arrivee + douane_import + livraison_finale
+
+if marge_type == "Pourcentage (%)":
+    prix_final = total_couts * (1 + valeur_marge / 100)
+else:
+    prix_final = total_couts + valeur_marge
+
+prix_final_devise = prix_final * taux_change
+
+with col_total:
+    st.write(f"### Prix de vente final pour {client if client else 'le client'}")
+    st.markdown(f'<p class="main-price">{prix_final_devise:,.2f} {devise}</p>', unsafe_allow_html=True)
     
-    if not df_history.empty:
-        st.dataframe(df_history, use_container_width=True)
-        
-        # Petit graphique d'analyse
-        st.line_chart(df_history.set_index('date')['prix_total'])
-    else:
-        st.info("Aucun devis dans l'historique.")
+    if st.button("✅ Valider et Générer le Devis"):
+        st.balloons()
+        st.success(f"Dossier {reference} enregistré avec succès !")
+        # Ici on peut ajouter la fonction de génération PDF ou sauvegarde DB
 
 # --- FOOTER ---
-st.divider()
-st.caption("Propriété de GLOBAL TLS SARL - Système Sécurisé")
+st.caption(f"GLOBAL TLS SARL - Logiciel de Cotation Interne - {datetime.now().year}")
