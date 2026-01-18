@@ -5,7 +5,7 @@ from datetime import datetime
 import os
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="GLOBAL TLS - Expert Devis", layout="wide")
+st.set_page_config(page_title="GLOBAL TLS - Devis Pro", layout="wide")
 
 class PDF(FPDF):
     def header(self):
@@ -45,7 +45,7 @@ def generate_pdf(data):
     
     lignes = [
         (f"Fret Principal ({data['mode']})", f"{data['ptax']:.2f} UP", f"{data['fret_total']:,.0f}"),
-        ("Surcharge Carburant (BAF)", "-", f"{data['baf']:,.0f}"),
+        (f"Surcharge Carburant (BAF {data['baf_pc']}%)", "-", f"{data['baf_val']:,.0f}"),
         ("Passage Portuaire & Formalités", "-", f"{data['port']:,.0f}"),
         ("Livraison & Transport Local", "-", f"{data['livraison']:,.0f}")
     ]
@@ -65,33 +65,31 @@ def generate_pdf(data):
     pdf.cell(0, 10, "Conditions de validité :", 0, 1)
     pdf.set_font("Arial", '', 10)
     pdf.cell(0, 5, "- Offre valable 15 jours sous réserve de place et de matériel.", 0, 1)
-    pdf.cell(0, 5, f"- Taux de change appliqué : {data['change']}", 0, 1) if data['change'] != 1 else None
     pdf.cell(0, 5, "- Selon conditions générales de GLOBAL TLS SARL.", 0, 1)
     
     return pdf.output(dest='S').encode('latin-1')
 
 # --- INTERFACE ---
-st.title("🌍 GLOBAL TLS : Devis Multi-Devises")
+st.title("📋 GLOBAL TLS - Calculateur avec BAF %")
 
 with st.sidebar:
     st.header("⚙️ Configuration")
     ref_devis = st.text_input("Numéro de l'offre", value="GTLS-COT-001")
-    devise_client = st.selectbox("Devise de facturation (Cible)", ["FCFA", "EUR", "USD"])
-    taux_change = st.number_input("Taux de conversion (ex: 1€ = 655.957)", value=655.957 if devise_client == "FCFA" else 1.0)
-    st.caption("Si vous travaillez déjà dans la devise cible, laissez le taux à 1.0")
+    devise = st.selectbox("Devise", ["FCFA", "EUR", "USD"])
+    change = st.number_input("Taux de change (si besoin)", value=1.0)
 
 col_exp, col_prix = st.columns(2)
 
 with col_exp:
     st.subheader("📦 Expédition")
-    client = st.text_input("Client")
+    client = st.text_input("Nom du Client")
     mode = st.selectbox("Mode de transport", ["Maritime (1t=1m3)", "Aérien (1t=6m3)", "Routier (1t=3m3)"])
     poids_brut = st.number_input("Poids Total (kg)", value=0.0)
-    nb_colis = st.number_input("Nb de colis", min_value=1, value=1)
+    nb_colis = st.number_input("Nombre de colis", min_value=1, value=1)
     
-    st.write("Dimensions moyennes (m)")
+    st.write("Dimensions par colis (m)")
     lx, ly, lz = st.columns(3)
-    L, W, H = lx.number_input("L"), ly.number_input("W"), lz.number_input("H")
+    L, W, H = lx.number_input("L", 1.0), ly.number_input("W", 1.0), lz.number_input("H", 1.0)
 
 # Calcul UP
 vol_t = nb_colis * (L * W * H)
@@ -100,28 +98,35 @@ elif "Aérien" in mode: p_tax = max(poids_brut, vol_t * 166.67)
 else: p_tax = max(poids_brut/1000, vol_t/3)
 
 with col_prix:
-    st.subheader("💰 Coûts (Devise d'achat)")
-    fret_u = st.number_input("Taux de Fret unitaire", value=0.0)
-    baf = st.number_input("BAF Totale", value=0.0)
-    port = st.number_input("Port / Douane", value=0.0)
-    livraison = st.number_input("Livraison Local", value=0.0)
+    st.subheader("💰 Coûts HT")
+    fret_u = st.number_input("Prix unitaire du Fret (par UP)", value=0.0)
+    
+    # CASE BAF EN POURCENTAGE
+    baf_pourcent = st.number_input("Surcharge BAF (en % du Fret)", value=0.0, step=0.5)
+    
+    port = st.number_input("Passage Portuaire / Douane", value=0.0)
+    livraison = st.number_input("Livraison finale", value=0.0)
 
-# Calcul totaux avec conversion
-total_ht_origine = (p_tax * fret_u) + baf + port + livraison
-total_final = total_ht_origine * taux_change
+# Calculs
+fret_total_converti = (p_tax * fret_u) * change
+baf_calculee = fret_total_converti * (baf_pourcent / 100)
+port_converti = port * change
+livraison_converti = livraison * change
+
+total_global = fret_total_converti + baf_calculee + port_converti + livraison_converti
 
 st.divider()
-st.metric(f"Total en {devise_client}", f"{total_final:,.0f} {devise_client}", delta=f"UP: {p_tax:.2f}")
+st.info(f"UP retenue : {p_tax:.2f} | BAF calculée : {baf_calculee:,.0f} {devise}")
+st.success(f"### TOTAL DEVIS : {total_global:,.0f} {devise}")
 
 if st.button("📄 GÉNÉRER LE DEVIS PDF"):
     if client:
         donnees = {
             "client": client, "ref": ref_devis, "ptax": p_tax, "mode": mode,
-            "fret_total": (p_tax * fret_u) * taux_change, 
-            "baf": baf * taux_change, 
-            "port": port * taux_change,
-            "livraison": livraison * taux_change, 
-            "total": total_final, "devise": devise_client, "change": taux_change
+            "fret_total": fret_total_converti, 
+            "baf_pc": baf_pourcent, "baf_val": baf_calculee,
+            "port": port_converti, "livraison": livraison_converti, 
+            "total": total_global, "devise": devise
         }
         pdf_file = generate_pdf(donnees)
-        st.download_button("⬇️ Télécharger", data=pdf_file, file_name=f"Devis_{client}.pdf")
+        st.download_button("⬇️ Télécharger le Devis", data=pdf_file, file_name=f"Devis_{client}.pdf")
